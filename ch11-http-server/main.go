@@ -1,9 +1,13 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 func main() {
@@ -14,11 +18,41 @@ func main() {
 	mux.HandleFunc("POST /users", createUser)
 
 	// 全ルートにミドルウェアを適用
-	handler := loggingMiddleware(mux)
+	// handler := loggingMiddleware(mux)
+	// 内側から mux ⇒ logging ⇒ recover
+	handler := recoverMiddleware(
+		loggingMiddleware(mux),
+	)
 
-	fmt.Println("サーバー起動: http://localhost:8080")
-	if err := http.ListenAndServe(":8080", handler); err != nil {
-		fmt.Fprintf(os.Stderr, "サーバーエラー: %v\n", err)
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      handler,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	// メインスレッドをブロックせずシグナルを監視するため
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-sigCh
+		slog.Info("シャットダウン開始", "signal", sig)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			slog.Error("シャットダウン失敗", "error", err)
+		}
+	}()
+
+	// fmt.Println("サーバー起動: http://localhost:8080")
+	slog.Info("サーバー起動", "addr", srv.Addr)
+	if err := srv.ListenAndServe(); err != nil {
+		// fmt.Fprintf(os.Stderr, "サーバーエラー: %v\n", err)
+		slog.Error("サーバーエラー", "error", err)
 		os.Exit(1)
 	}
+	slog.Info("サーバー停止完了")
 }
