@@ -1,11 +1,18 @@
 package main
 
 import (
+	"ch13-bookmark-app/internal/handler"
 	"ch13-bookmark-app/internal/repository"
+	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -29,6 +36,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	// TODO サーバー起動の処理
+	h := handler.New(repo)
+	mux := http.NewServeMux()
+	h.Routes(mux)
 
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: loggingMiddleware(mux),
+	}
+
+	// Ctrl+C で graceful shutdown を実行
+	go func() {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		<-ctx.Done()
+		slog.Info("シャットダウン開始")
+		shutctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutctx); err != nil {
+			slog.Error("シャットダウン失敗", "error", err)
+		}
+	}()
+
+	slog.Info("サーバー起動", "addr", ":8080")
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("サーバーエラー", "error", err)
+		os.Exit(1)
+	}
 }
