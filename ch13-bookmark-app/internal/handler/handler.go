@@ -44,7 +44,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /bookmarks", h.listBookmarks)
 	mux.HandleFunc("POST /bookmarks", h.createBookmark)
 	mux.HandleFunc("GET /bookmarks/{id}", h.getBookmark)
-	mux.HandleFunc("DELETE /bookmarks/{id}", nil)
+	mux.HandleFunc("DELETE /bookmarks/{id}", h.deleteBookmark)
 }
 
 func (h *Handler) createBookmark(w http.ResponseWriter, r *http.Request) {
@@ -93,5 +93,19 @@ func (h *Handler) getBookmark(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteBookmark(w http.ResponseWriter, r *http.Request) {
-	// TODO 未実装
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "無効なID")
+		return
+	}
+	err = h.repo.Delete(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "ブックマークが見つかりません")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "削除に失敗しました")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
